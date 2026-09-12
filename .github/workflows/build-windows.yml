@@ -1,0 +1,123 @@
+name: Build SHADOW 3.0 Production Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 75
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract SHADOW Stage 12 source
+        shell: pwsh
+        run: |
+          if (Test-Path "build_src") { Remove-Item "build_src" -Recurse -Force }
+          Expand-Archive -Path ".shadow\source_bundle.zip" -DestinationPath "build_src" -Force
+          if (!(Test-Path "build_src\app.py")) { throw "Stage 12 source bundle did not extract correctly" }
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "build_src/requirements.txt"
+
+      - name: Install runtime and test dependencies
+        shell: pwsh
+        working-directory: build_src
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install --prefer-binary -r requirements.txt
+          python -m pip install "pytest>=8,<9"
+
+      - name: Verify major dependencies
+        shell: pwsh
+        working-directory: build_src
+        run: |
+          python -c "import PyQt6, sounddevice, numpy, requests; print('UI/audio dependencies OK')"
+          python -c "import faster_whisper, ctranslate2; print('Whisper runtime OK')"
+          python -c "from google import genai; import openai, keyring; print('AI providers OK')"
+          python -c "import docx, reportlab; print('Document dependencies OK')"
+          python -c "import playwright, pyautogui, PIL; print('Browser/desktop automation imports OK')"
+          python -c "import feedparser, fastapi, uvicorn; from google_auth_oauthlib.flow import InstalledAppFlow; from googleapiclient.discovery import build; print('Integration dependencies OK')"
+          python -c "from proactive.engine import ProactiveEngine; from security.audit import SecurityAudit; from core.preflight import run_preflight; print('Stage 12 release modules OK')"
+
+      - name: Source release check
+        shell: pwsh
+        working-directory: build_src
+        run: |
+          python release_check.py --ci
+          python -m compileall -q .
+
+      - name: Unit and regression tests
+        shell: pwsh
+        working-directory: build_src
+        run: |
+          python -m pytest -q
+
+      - name: UI import smoke test
+        shell: pwsh
+        working-directory: build_src
+        run: |
+          python -c "from ui.main_window import ShadowMainWindow; from ui.release_center import ReleaseCenter; print('Main UI imports OK')"
+
+      - name: Build SHADOW.exe
+        shell: pwsh
+        working-directory: build_src
+        run: |
+          python -m PyInstaller --clean --noconfirm shadow.spec
+          if (!(Test-Path "dist\SHADOW.exe")) { throw "SHADOW.exe was not created" }
+
+      - name: Run packaged EXE diagnostics
+        shell: pwsh
+        working-directory: build_src
+        run: |
+          $p = Start-Process -FilePath ".\dist\SHADOW.exe" -ArgumentList "--diagnostics-only" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            throw "Packaged SHADOW.exe diagnostics failed with exit code $($p.ExitCode)"
+          }
+
+      - name: Create portable test package
+        shell: pwsh
+        working-directory: build_src
+        run: |
+          New-Item -ItemType Directory -Force -Path "release\portable" | Out-Null
+          Copy-Item "dist\SHADOW.exe" "release\portable\SHADOW.exe" -Force
+          Copy-Item "QUICK_START.txt" "release\portable\QUICK_START.txt" -Force
+          Copy-Item "TESTING_GUIDE.md" "release\portable\TESTING_GUIDE.md" -Force
+          Copy-Item "KNOWN_LIMITATIONS.md" "release\portable\KNOWN_LIMITATIONS.md" -Force
+          Copy-Item "START_SAFE_MODE.bat" "release\portable\START_SAFE_MODE.bat" -Force
+          Copy-Item "START_DIAGNOSTICS.bat" "release\portable\START_DIAGNOSTICS.bat" -Force
+          Compress-Archive -Path "release\portable\*" -DestinationPath "SHADOW_3.0_Portable_Windows.zip" -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+
+      - name: Build per-user installer
+        shell: pwsh
+        working-directory: build_src
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
+          if (!(Test-Path $iscc)) { throw "Inno Setup compiler not found" }
+          & $iscc "installer\SHADOW.iss"
+          if (!(Test-Path "release\installer\SHADOW_3.0_Setup.exe")) { throw "Installer was not created" }
+
+      - name: Upload portable Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHADOW-3.0-Portable-Windows
+          path: build_src/SHADOW_3.0_Portable_Windows.zip
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHADOW-3.0-Setup-Windows
+          path: build_src/release/installer/SHADOW_3.0_Setup.exe
