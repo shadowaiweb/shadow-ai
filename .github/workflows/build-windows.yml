@@ -13,48 +13,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reconstruct and verify SHADOW Stage 12 source
+      - name: Verify and extract SHADOW Stage 12 source
         shell: pwsh
         run: |
-          $parts = @(
-            ".shadow\final_b64_01.txt",
-            ".shadow\final_b64_02.txt",
-            ".shadow\fix_b64_03.txt",
-            ".shadow\fix_b64_04.txt",
-            ".shadow\fix_b64_05.txt",
-            ".shadow\fix_b64_06.txt",
-            ".shadow\fix_b64_07.txt",
-            ".shadow\fix_b64_08.txt",
-            ".shadow\fix_b64_09.txt",
-            ".shadow\fix_b64_10.txt"
-          )
-          foreach ($part in $parts) {
-            if (!(Test-Path $part)) { throw "Missing source chunk: $part" }
-          }
-
-          $b64 = ($parts | ForEach-Object { (Get-Content $_ -Raw).Trim() }) -join ""
-          if ($b64.Length -ne 181760) {
-            throw "Unexpected source payload length: $($b64.Length)"
-          }
-
-          [IO.File]::WriteAllBytes(
-            ".shadow\source_bundle_fixed.zip",
-            [Convert]::FromBase64String($b64)
-          )
-
+          $bundle = ".shadow\source_bundle.zip"
+          if (!(Test-Path $bundle)) { throw "Missing SHADOW source bundle" }
           $expected = "06748ee80b3071354cc753c75032ee3bb3f90c0866976f2218b840ff03bef81b"
-          $actual = (Get-FileHash ".shadow\source_bundle_fixed.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne $expected) {
-            throw "Source SHA-256 mismatch. Expected $expected, got $actual"
-          }
-
-          if (Test-Path "build_src") {
-            Remove-Item "build_src" -Recurse -Force
-          }
-          Expand-Archive -Path ".shadow\source_bundle_fixed.zip" -DestinationPath "build_src" -Force
-          if (!(Test-Path "build_src\app.py")) {
-            throw "Stage 12 source bundle did not extract correctly"
-          }
+          $actual = (Get-FileHash $bundle -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Source SHA-256 mismatch. Expected $expected, got $actual" }
+          if (Test-Path "build_src") { Remove-Item "build_src" -Recurse -Force }
+          Expand-Archive -Path $bundle -DestinationPath "build_src" -Force
+          if (!(Test-Path "build_src\app.py")) { throw "Stage 12 source bundle did not extract correctly" }
           Write-Host "SHADOW source bundle verified and extracted."
 
       - name: Set up Python 3.11
@@ -94,14 +63,12 @@ jobs:
       - name: Unit and regression tests
         shell: pwsh
         working-directory: build_src
-        run: |
-          python -m pytest -q
+        run: python -m pytest -q
 
       - name: UI import smoke test
         shell: pwsh
         working-directory: build_src
-        run: |
-          python -c "from ui.main_window import ShadowMainWindow; from ui.release_center import ReleaseCenter; print('Main UI imports OK')"
+        run: python -c "from ui.main_window import ShadowMainWindow; from ui.release_center import ReleaseCenter; print('Main UI imports OK')"
 
       - name: Build SHADOW.exe
         shell: pwsh
@@ -115,9 +82,7 @@ jobs:
         working-directory: build_src
         run: |
           $p = Start-Process -FilePath ".\dist\SHADOW.exe" -ArgumentList "--diagnostics-only" -Wait -PassThru
-          if ($p.ExitCode -ne 0) {
-            throw "Packaged SHADOW.exe diagnostics failed with exit code $($p.ExitCode)"
-          }
+          if ($p.ExitCode -ne 0) { throw "Packaged SHADOW.exe diagnostics failed with exit code $($p.ExitCode)" }
 
       - name: Create portable test package
         shell: pwsh
@@ -134,8 +99,7 @@ jobs:
 
       - name: Install Inno Setup
         shell: pwsh
-        run: |
-          choco install innosetup -y --no-progress
+        run: choco install innosetup -y --no-progress
 
       - name: Build per-user installer
         shell: pwsh
