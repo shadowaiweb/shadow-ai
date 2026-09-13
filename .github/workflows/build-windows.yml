@@ -13,11 +13,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify and extract SHADOW Stage 12 source
+      - name: Reconstruct, verify and extract SHADOW Stage 12 source
         shell: pwsh
         run: |
-          $bundle = ".shadow\source_bundle.zip"
-          if (!(Test-Path $bundle)) { throw "Missing SHADOW source bundle" }
+          $parts = @(
+            ".shadow\final_b64_01.txt",
+            ".shadow\final_b64_02.txt",
+            ".shadow\fix_b64_03.txt",
+            ".shadow\fix_b64_04.txt",
+            ".shadow\fix_b64_05.txt",
+            ".shadow\fix_b64_06.txt",
+            ".shadow\fix_b64_07.txt",
+            ".shadow\fix_b64_08.txt",
+            ".shadow\fix_b64_09.txt",
+            ".shadow\fix_b64_10a.txt",
+            ".shadow\fix_b64_10b.txt"
+          )
+          foreach ($part in $parts) {
+            if (!(Test-Path $part)) { throw "Missing source chunk: $part" }
+          }
+          $b64 = ($parts | ForEach-Object { (Get-Content $_ -Raw).Trim() }) -join ""
+          if ($b64.Length -ne 181760) { throw "Unexpected source payload length: $($b64.Length)" }
+          $bundle = ".shadow\source_bundle_rebuilt.zip"
+          [IO.File]::WriteAllBytes($bundle, [Convert]::FromBase64String($b64))
           $expected = "06748ee80b3071354cc753c75032ee3bb3f90c0866976f2218b840ff03bef81b"
           $actual = (Get-FileHash $bundle -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw "Source SHA-256 mismatch. Expected $expected, got $actual" }
