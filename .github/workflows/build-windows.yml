@@ -13,6 +13,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Diagnose source chunks
+        shell: pwsh
+        run: |
+          function Get-TextSha256([string]$text) {
+            $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+            finally { $sha.Dispose() }
+          }
+          foreach ($item in @(
+            @{Name='C02'; Path='.shadow\final_b64_02.txt'},
+            @{Name='C07'; Path='.shadow\fix_b64_07.txt'}
+          )) {
+            $text = (Get-Content $item.Path -Raw).Trim()
+            Write-Host "$($item.Name)_LEN=$($text.Length)"
+            $index = 0
+            for ($offset = 0; $offset -lt $text.Length; $offset += 1000) {
+              $take = [Math]::Min(1000, $text.Length - $offset)
+              $block = $text.Substring($offset, $take)
+              $index++
+              Write-Host ("{0}_{1:D2}={2}" -f $item.Name, $index, (Get-TextSha256 $block))
+            }
+          }
+
       - name: Reconstruct, verify and extract SHADOW Stage 12 source
         shell: pwsh
         run: |
